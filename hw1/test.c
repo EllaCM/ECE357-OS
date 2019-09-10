@@ -63,10 +63,17 @@
 //	int n = write(1, 0, 5000);
 //}
 
-void main() {
+int a() {
+	return -1;
+}
+
+int main() {
 // 	close(-1);
 // 	return 0;
 	// strerror(0);
 	// strerror(1)
-	strerror(-1);
+	// printf("%s", strerror(56453545));
+	// strerror(56453545);
+	a();
+	return 10;
 }
