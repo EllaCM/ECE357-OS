@@ -18,6 +18,7 @@ bool mtimeFlag = false, volumeFlag = false, init = true;
 double mtimeLimit;
 dev_t devNum;
 time_t currentTime;
+char startPath[4096];
 
 bool check_mtime(__time_t mtime);
 char *pathJoin(char *curPath, char *childPath);
@@ -65,15 +66,16 @@ int main(int argc, char *argv[])
         exit(EXIT_FAILURE);
     }
     curPath = argv[optind];
+    memcpy(startPath, curPath, sizeof(curPath));
     recursive_travese(curPath);
     return 0;
 }
 
 char *pathJoin(char *curPath, char *childPath)
 {
-    if (strcmp(childPath, ".") == 0 && init)
+    if (strcmp(curPath, startPath) == 0 && strcmp(childPath, ".") == 0)
     {
-        return childPath;
+        return curPath;
     }
     return strcat(strcat(curPath, SEP), childPath);
 }
@@ -100,23 +102,22 @@ void recursive_travese(char *curPath)
             fprintf(stderr, "error %s", strerror(errno));
             break;
         }
-        if (strcmp(direntp->d_name, "..") == 0 || (init || strcmp(direntp->d_name, ".")) == 0)
-            continue;
+
+        if (strcmp(direntp->d_name, "..") == 0 || (strcmp(direntp->d_name, ".") == 0 && strcmp(curPath, startPath) != 0)) continue;
         strcpy(tmp, curPath);
         pathJoin(tmp, direntp->d_name);
+        
         if (lstat(tmp, &statbuf) < 0)
         {
             fprintf(stderr, "error getting stat %s: %s", tmp, strerror(errno));
             continue;
         }
-        
-        if (init || (mtimeFlag && check_mtime(statbuf.st_mtime))) {
-            continue;
-        }
-        
-        if (strcmp(curPath, ".") == 0 && init) {
-            init = false;
+        if (init) {
+            init = !init;
             devNum = statbuf.st_dev;
+        }
+        if ((mtimeFlag && check_mtime(statbuf.st_mtime))) {
+            continue;
         }
         
         if ((pwd = getpwuid(statbuf.st_uid)) == NULL)
@@ -149,14 +150,14 @@ void recursive_travese(char *curPath)
 }
 
 bool check_mtime(__time_t mtime) {
-    double timeDiff = difftime(mtime, currentTime);
-    printf("%f\n", timeDiff);
-    if (mtimeLimit > 0) {
-        if (timeDiff >= mtimeLimit) return true;
+    double timeDiff = difftime(currentTime, mtime);
+    // printf("%f %f\n", mtimeLimit, timeDiff);
+    if (mtimeLimit >= 0) {
+        if (timeDiff >= mtimeLimit) return false;
     } else {
-        if (timeDiff <= -mtimeLimit) return true;
+        if (timeDiff <= -mtimeLimit) return false;
     }
-    return false;
+    return true;
 }
 
 void print_inode(__ino_t inode)
@@ -229,7 +230,7 @@ void print_id(char *name)
 void print_size(struct stat *statbuf)
 {   
     if (S_ISBLK(statbuf->st_mode) || S_ISCHR(statbuf->st_mode)) {
-        printf("%lx, %lx\t", (long) major(statbuf->st_dev), (long) minor(statbuf->st_dev));
+        printf("%ld, %ld\t", (long) major(statbuf->st_rdev), (long) minor(statbuf->st_rdev));
     } else {
         printf("%lld\t", (long long) statbuf->st_size);
     }

@@ -1,6 +1,6 @@
 test:
 	gcc -o test recursive_file_lister.c
-	./test -m 123 -v .
+	./test -v .
 	rm test
 
 dev:
