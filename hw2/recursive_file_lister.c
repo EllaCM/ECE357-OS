@@ -14,10 +14,14 @@
 
 #define SEP "/"
 
-bool init = true;
+bool mtimeFlag = false, volumeFlag = false, init = true;
+double mtimeLimit;
+dev_t devNum;
+time_t currentTime;
 
-void recursive_travese(char *curPath);
+bool check_mtime(__time_t mtime);
 char *pathJoin(char *curPath, char *childPath);
+void recursive_travese(char *curPath);
 void parse_info(struct dirent *direntp, struct stat *statbuf, struct passwd *pwd, struct group *grp, char tmp[]);
 void print_inode(__ino_t inode);
 void print_block_num(__blkcnt_t block_num);
@@ -29,8 +33,8 @@ void print_fname(char tmp[], __mode_t mode);
 
 int main(int argc, char *argv[])
 {
-    bool mtimeFlag = false, volumeFlag = false;
-    int opt, mtime;
+    time(&currentTime);
+    int opt;
     char *curPath;
     while ((opt = getopt(argc, argv, "m:v")) != -1)
     {
@@ -43,7 +47,7 @@ int main(int argc, char *argv[])
                 fprintf(stderr, "No value provided for flag m\n");
                 exit(EXIT_FAILURE);
             }
-            mtime = atoi(optarg);
+            mtimeLimit = (double) atoi(optarg);
             // check error
             break;
         case 'v':
@@ -69,7 +73,6 @@ char *pathJoin(char *curPath, char *childPath)
 {
     if (strcmp(childPath, ".") == 0 && init)
     {
-        init = false;
         return childPath;
     }
     return strcat(strcat(curPath, SEP), childPath);
@@ -77,7 +80,7 @@ char *pathJoin(char *curPath, char *childPath)
 
 void recursive_travese(char *curPath)
 {
-    char tmp[1024];
+    char tmp[4096];
     DIR *dirp;
     struct dirent *direntp;
     struct stat statbuf;
@@ -103,9 +106,19 @@ void recursive_travese(char *curPath)
         pathJoin(tmp, direntp->d_name);
         if (lstat(tmp, &statbuf) < 0)
         {
-            fprintf(stderr, "error getting stat %s: %s", curPath, strerror(errno));
+            fprintf(stderr, "error getting stat %s: %s", tmp, strerror(errno));
+            continue;
         }
-
+        
+        if (init || (mtimeFlag && check_mtime(statbuf.st_mtime))) {
+            continue;
+        }
+        
+        if (strcmp(curPath, ".") == 0 && init) {
+            init = false;
+            devNum = statbuf.st_dev;
+        }
+        
         if ((pwd = getpwuid(statbuf.st_uid)) == NULL)
         {
             fprintf(stderr, "user not found");
@@ -117,18 +130,33 @@ void recursive_travese(char *curPath)
             fprintf(stderr, "group not found");
             continue;
         }
-
+        
         parse_info(direntp, &statbuf, pwd, grp, tmp);
 
         if (direntp->d_type == DT_DIR && strcmp(direntp->d_name, ".") != 0)
         {
-            recursive_travese(tmp);
+            if (!volumeFlag) {
+                recursive_travese(tmp);
+            } else if (devNum == statbuf.st_dev) {
+                recursive_travese(tmp);
+            }
         }
     }
     if (closedir(dirp) < 0)
     {
         fprintf(stderr, "error closing directory %s: %s", curPath, strerror(errno));
     }
+}
+
+bool check_mtime(__time_t mtime) {
+    double timeDiff = difftime(mtime, currentTime);
+    printf("%f\n", timeDiff);
+    if (mtimeLimit > 0) {
+        if (timeDiff >= mtimeLimit) return true;
+    } else {
+        if (timeDiff <= -mtimeLimit) return true;
+    }
+    return false;
 }
 
 void print_inode(__ino_t inode)
@@ -146,7 +174,6 @@ void print_block_num(__blkcnt_t block_num)
 void print_permission(__mode_t mode)
 {
     char permission[10];
-    memset(permission, '-', sizeof(permission));
     char c;
     switch (mode & S_IFMT)
     {
@@ -176,26 +203,16 @@ void print_permission(__mode_t mode)
         break;
     }
     permission[0] = c;
-    if (mode & S_IRUSR)
-        permission[1] = 'r';
-    if (mode & S_IWUSR)
-        permission[2] = 'w';
-    if (mode & S_IXUSR)
-        permission[3] = 'x';
-    if (mode & S_IRGRP)
-        permission[4] = 'r';
-    if (mode & S_IWGRP)
-        permission[5] = 'w';
-    if (mode & S_IXGRP)
-        permission[6] = 'x';
-    if (mode & S_IROTH)
-        permission[7] = 'r';
-    if (mode & S_IWOTH)
-        permission[8] = 'w';
-    if (mode & S_IROTH)
-        permission[9] = 'x';
-    if (mode & S_ISVTX)
-        permission[9] = 't';
+    permission[1] = (mode & S_IRUSR) ? 'r' : '-';
+    permission[2] = (mode & S_IWUSR) ? 'w' : '-';
+    permission[3] = (mode & S_IXUSR) ? 'x' : '-';
+    permission[4] = (mode & S_IRGRP) ? 'r' : '-';
+    permission[5] = (mode & S_IWGRP) ? 'w' : '-';
+    permission[6] = (mode & S_IXGRP) ? 'x' : '-';
+    permission[7] = (mode & S_IROTH) ? 'r' : '-';
+    permission[8] = (mode & S_IWOTH) ? 'w' : '-';
+    permission[9] = (mode & S_IXOTH) ? 'x' : '-';
+    permission[9] = (mode & S_ISVTX) ? 't' : '-';
     printf("%s\t", permission);
 }
 
@@ -214,19 +231,19 @@ void print_size(struct stat *statbuf)
     if (S_ISBLK(statbuf->st_mode) || S_ISCHR(statbuf->st_mode)) {
         printf("%lx, %lx\t", (long) major(statbuf->st_dev), (long) minor(statbuf->st_dev));
     } else {
-        printf("%ld\t", statbuf->st_size);
+        printf("%lld\t", (long long) statbuf->st_size);
     }
 }
 
 void print_mtime(__time_t *mtime) {
     struct tm* mt = localtime(mtime);
-    char buf[1024];
+    char buf[4096];
     strftime(buf, sizeof(buf), "%b %d %R", mt);
     printf("%s\t", buf);
 }
 
 void print_fname(char tmp[], __mode_t mode) {
-    char buf[1024];
+    char buf[4096];
     printf("%s", tmp);
     if (S_ISLNK(mode)) {
         readlink(tmp, buf, sizeof(buf));
