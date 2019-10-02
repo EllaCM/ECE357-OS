@@ -17,15 +17,15 @@
 #define SEP "/"
 
 bool mtimeFlag = false, volumeFlag = false, userFlag = false,
-     curUserNotFound = false;
-int nGroups = 1024, curGroupsCnt;
+     curUserNotFound = false, curUserNameNotFound = false;
+int nGroups = 0, curGroupsCnt;
 double mtimeLimit;
 char *curUser;
 char startPath[4096];
 dev_t devNum;
 time_t currentTime;
 __uid_t curUid;
-gid_t curGroups[1024];
+gid_t *curGroups;
 struct passwd *curUserp;
 
 bool check_uid_or_user(char *curUser);
@@ -54,10 +54,6 @@ int main(int argc, char *argv[]) {
     switch (opt) {
     case 'm':
       mtimeFlag = true;
-      if (optarg == NULL) {
-        fprintf(stderr, "No value provided for flag m\n");
-        exit(EXIT_FAILURE);
-      }
       // https://stackoverflow.com/questions/8871711/atoi-how-to-identify-the-difference-between-zero-and-error/18544436
       char *end;
       long num = strtol(optarg, &end, 10);
@@ -67,19 +63,15 @@ int main(int argc, char *argv[]) {
       }
       if ((num == LONG_MAX || num == LONG_MIN) && errno == ERANGE) {
         fprintf(stderr, "Number out of range %s\n", optarg);
+        exit(EXIT_FAILURE);
       }
       mtimeLimit = num;
-      // check error
       break;
     case 'v':
       volumeFlag = true;
       break;
     case 'u':
       userFlag = true;
-      if (optarg == NULL) {
-        fprintf(stderr, "No value provided for flag u\n");
-        exit(EXIT_FAILURE);
-      }
       curUser = optarg;
       if (check_uid_or_user(optarg)) {
         curUserp = getpwuid(atoi(optarg));
@@ -90,11 +82,16 @@ int main(int argc, char *argv[]) {
       } else {
         curUserp = getpwnam(optarg);
         if (curUserp == NULL) {
-          fprintf(stderr, "No user named %s found", curUser);
-          exit(EXIT_FAILURE);
+          curUserNameNotFound = true;
+          // fprintf(stderr, "No user named %s found\n", curUser);
+          // exit(EXIT_FAILURE);
         }
       }
-      curGroupsCnt = getgrouplist(curUser, curUserp->pw_gid, curGroups, &nGroups);
+      if (curUserp) {
+        getgrouplist(curUser, curUserp->pw_gid, curGroups, &nGroups);
+        curGroups = malloc(nGroups * sizeof(gid_t));
+        curGroupsCnt = getgrouplist(curUser, curUserp->pw_gid, curGroups, &nGroups);
+      }
       break;
     default:
       printf("Unfound flag\n");
@@ -111,7 +108,7 @@ int main(int argc, char *argv[]) {
   if (volumeFlag) {
     struct stat statbuf;
     if (lstat(curPath, &statbuf) < 0) {
-      fprintf(stderr, "Error getting stat %s: %s", curPath, strerror(errno));
+      fprintf(stderr, "Error getting stat %s: %s\n", curPath, strerror(errno));
       exit(EXIT_FAILURE);
     }
     devNum = statbuf.st_dev;
@@ -152,7 +149,7 @@ void recursive_travese(char *curPath) {
     path_join(tmp, direntp->d_name);
 
     if (lstat(tmp, &statbuf) < 0) {
-      fprintf(stderr, "Can't retrieve stat for %s: %s", tmp, strerror(errno));
+      fprintf(stderr, "Can't retrieve stat for %s: %s\n", tmp, strerror(errno));
       continue;
     }
     if (userFlag && !check_user(&statbuf)) continue;
@@ -169,7 +166,7 @@ void recursive_travese(char *curPath) {
       else fprintf(stderr, "note: not crossing mount point at %s\n", tmp);
     }
   }
-  if (closedir(dirp) < 0) fprintf(stderr, "error closing directory %s: %s", curPath, strerror(errno));
+  if (closedir(dirp) < 0) fprintf(stderr, "error closing directory %s: %s\n", curPath, strerror(errno));
 }
 
 void parse_info(struct dirent *direntp, struct stat *statbuf,
@@ -189,23 +186,26 @@ void parse_info(struct dirent *direntp, struct stat *statbuf,
 }
 
 bool check_user(struct stat *statbuf) {
-  if (statbuf->st_mode & S_IRUSR &&
+  if (!curUserNameNotFound && statbuf->st_mode & S_IRUSR &&
       ((curUserNotFound && curUid == statbuf->st_uid) ||
        (!curUserNotFound && curUserp->pw_uid == statbuf->st_uid)))
     return true;
 
   bool sameGroup = false;
-  struct group *gr;
-  for (int i = 0; i < curGroupsCnt; i++) {
-    gr = getgrgid(curGroups[i]);
-    if (gr->gr_gid == statbuf->st_gid) {
-      sameGroup = true;
-      break;
+  if (curGroupsCnt != 0) {
+    struct group *gr;
+    for (int i = 0; i < curGroupsCnt; i++) {
+      gr = getgrgid(curGroups[i]);
+      if (gr->gr_gid == statbuf->st_gid) {
+        sameGroup = true;
+        break;
+      }
     }
   }
 
-  if (sameGroup && statbuf->st_mode & S_IRGRP) return true;
+  if (!curUserNameNotFound && sameGroup && statbuf->st_mode & S_IRGRP) return true;
   if (!sameGroup && statbuf->st_mode & S_IROTH) return true;
+  return false;
 }
 
 bool check_uid_or_user(char *curUser) { return isdigit(*curUser); }
