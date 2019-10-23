@@ -21,134 +21,124 @@
 #define TIME 10
 #define EXEC 11
 #define CHDIR 12
+#define PID 13
+#define GETLINE 14
 
-void run_cd(char *path);
+int run_cd(char *path);
 
-void check_error(int fd, int n, char *s, int type);
+void check_error(int fd, int n, char *s, int type, int return_code);
 
 bool check_pound(const char *line);
 
 char **parse_cmd(char *line, mode_t **redirIn, mode_t **redirOut, int **mode, int *cmdLength, int *redirLoc);
 
-void run_cmd(char **parsedCmd, mode_t *redirIn, mode_t *redirOut, int *mode, int cmdLength, int redirLoc);
+int run_cmd(char **parsedCmd, mode_t *redirIn, mode_t *redirOut, int *mode, int cmdLength, int redirLoc);
 
-void run_pwd();
+int run_pwd();
 
-void run_exit(char *code);
+void run_exit(char *code, int return_code);
 
 void print_time_info(struct timeval *result, struct rusage *ru);
 
-void print_info(pid_t pid);
+void print_info(pid_t pid, int wstatus, int *return_code);
 
 void get_time(struct timeval *time);
 
-int status;
+int shell_redirect_fd = -1;
+char* shell_redirect;
 
 int main(int argc, char *argv[]) {
     FILE *infile;
-
     if (argc > 1) {
-        infile = fopen(argv[1], "r");
-        if (infile == NULL) {
-            perror("unable to open file");
-            exit(EXIT_FAILURE);
-        }
+        shell_redirect_fd = open(argv[1], O_RDONLY);
+        shell_redirect = argv[1];
+        check_error(shell_redirect_fd, 0, argv[1], ROPEN, 0);
+        infile = fdopen(shell_redirect_fd, "r");
     } else {
-        infile = stdin;
+        infile = fdopen(STDIN_FILENO, "r");
     }
-
+    if (infile == NULL) {
+        perror("Unable to open file");
+        exit(EXIT_FAILURE);
+    }
     char *line = NULL;
     size_t lineLength = 0;
     ssize_t byteRead = 0;
-    int pos;
-
+    int return_code = 0;
     while ((byteRead = getline(&line, &lineLength, infile)) != -1) {
-        // byteRead;
+        check_error(byteRead, 0, "", GETLINE, 0);
         if (check_pound(line)) continue;
         int *mode, redirLoc = 0, cmdLength = 0;
         mode_t *redirIn, *redirOut;
         char **parsedCmd = parse_cmd(line, &redirIn, &redirOut, &mode, &cmdLength, &redirLoc);
-        // printf("redirLoc: %d\n", redirLoc);
         if (strcmp(parsedCmd[0], "cd") == 0) {
-            run_cd(parsedCmd[1]);
+            return_code = run_cd(parsedCmd[1]);
             continue;
         }
         if (redirLoc == 0 && strcmp(parsedCmd[0], "pwd") == 0) {
-            run_pwd();
+            return_code = run_pwd();
             continue;
         }
         if (strcmp(parsedCmd[0], "exit") == 0) {
-            run_exit(parsedCmd[1]);
+            run_exit(parsedCmd[1], return_code);
         }
-        run_cmd(parsedCmd, redirIn, redirOut, mode, cmdLength, redirLoc);
+        return_code = run_cmd(parsedCmd, redirIn, redirOut, mode, cmdLength, redirLoc);
+        //TODO fix
         free(redirIn);
         free(redirOut);
         free(mode);
         free(parsedCmd);
     }
-
-    // close file
-    if (argc > 1 && fclose(infile) < 0) {
-        perror("unable to close file");
-        exit(EXIT_FAILURE);
-    }
     return 0;
 }
 
-void run_cmd(char **parsedCmd, mode_t *redirIn, mode_t *redirOut, int *mode, int cmdLength, int redirLoc) {
-    pid_t cpid, w;
+int run_cmd(char **parsedCmd, mode_t *redirIn, mode_t *redirOut, int *mode, int cmdLength, int redirLoc) {
+    pid_t w;
     struct rusage ru;
     struct timeval start, end, result;
-    int fd = -1;
+    int fd = -1, return_code = 0;
     int wstatus, i;
     int redirLength = (redirLoc != 0) ? cmdLength - redirLoc : 0;
 
     get_time(&start);
-    switch (cpid = fork()) {
+    switch (fork()) {
         case -1: // fail
             perror("fork failed");
             exit(EXIT_FAILURE);
-            break;
         case 0: // child
+            if (shell_redirect_fd != -1) check_error(close(shell_redirect_fd), 0, shell_redirect, ICLOSE, 0);
             for (i = 0; i < redirLength; i++) {
                 if (mode[i] & READ) {
                     fd = open(parsedCmd[redirLoc + i], redirIn[i]);
-                    check_error(fd, 0, parsedCmd[redirLoc + i], ROPEN);
-                    check_error(dup2(fd, STDIN_FILENO), 0, parsedCmd[redirLoc + i], DUP);
+                    check_error(fd, 0, parsedCmd[redirLoc + i], ROPEN, 1);
+                    check_error(dup2(fd, STDIN_FILENO), 0, parsedCmd[redirLoc + i], DUP, 1);
+                    check_error(close(fd), 0, parsedCmd[redirLoc + i], ICLOSE, 1);
                 }
                 if (mode[i] & WRITE) {
                     fd = open(parsedCmd[redirLoc + i], redirOut[i], 0666);
-                    check_error(fd, 0, parsedCmd[redirLoc + i], WOPEN);
-                    if (mode[i] & ERROR) check_error(dup2(fd, STDERR_FILENO), 0, parsedCmd[redirLoc + i], DUP);
-                    else check_error(dup2(fd, STDOUT_FILENO), 0, parsedCmd[redirLoc + i], DUP);
+                    check_error(fd, 0, parsedCmd[redirLoc + i], WOPEN, 1);
+                    if (mode[i] & ERROR) check_error(dup2(fd, STDERR_FILENO), 0, parsedCmd[redirLoc + i], DUP, 1);
+                    else check_error(dup2(fd, STDOUT_FILENO), 0, parsedCmd[redirLoc + i], DUP, 1);
+                    check_error(close(fd), 0, parsedCmd[redirLoc + i], OCLOSE, 1);
                 }
             }
             if (strcmp(parsedCmd[0], "pwd") == 0) {
                 run_pwd();
             } else {
                 if (redirLoc) parsedCmd[redirLoc] = NULL;
-                check_error(execvp(parsedCmd[0], parsedCmd), 0, parsedCmd[0], EXEC);
-            }
-            
-            // change to check_error
-            if (fd != -1 && close(fd) < 0) {
-                fprintf(stderr, "can not close file\n");
-                exit(EXIT_FAILURE);
+                check_error(execvp("parsedCmd[0]", parsedCmd), 0, parsedCmd[0], EXEC, 127);
             }
             break;
         default: // parent
             w = wait3(&wstatus, WUNTRACED | WCONTINUED, &ru);
-                        
-            if (w == -1) {
-                perror("waitpid failed");
-                exit(EXIT_FAILURE);
-            }
+            check_error(w, 0, "", PID, 0);
             get_time(&end);
             timersub(&end, &start, &result);
-            print_info(w);
+            print_info(w, wstatus, &return_code);
             print_time_info(&result, &ru);
             break;
     }
+    return return_code;
 }
 
 char **parse_cmd(char *line, mode_t **redirIn, mode_t **redirOut, int **mode, int *cmdLength, int *redirLoc) {
@@ -202,21 +192,23 @@ char **parse_cmd(char *line, mode_t **redirIn, mode_t **redirOut, int **mode, in
     return parsedCmd;
 }
 
-void run_cd(char *path) {
+int run_cd(char *path) {
     if (path == NULL) path = getenv("HOME");
-    check_error(chdir(path), 0, path, CHDIR);
+    check_error(chdir(path), 0, path, CHDIR, 0);
+    return 0;
 }
 
-void run_pwd() {
+int run_pwd() {
     char buf[BUFSIZ];
     if (getcwd(buf, BUFSIZ) == NULL) {
         perror("Can't get current working directory");
         exit(EXIT_FAILURE);
     }
     fprintf(stdout, "%s\n", buf);
+    return 0;
 }
 
-void check_error(int fd, int n, char *s, int type) {
+void check_error(int fd, int n, char *s, int type, int return_code) {
     if (fd < 0 || n < 0) {
         switch (type) {
             case WRITE:
@@ -247,17 +239,24 @@ void check_error(int fd, int n, char *s, int type) {
                 fprintf(stderr, "Can't exec %s: %s\n", s, strerror(errno));
                 break;
             case CHDIR:
-                fprintf(stderr, "Can't change current directory to %s: %s", s, strerror(errno));
+                fprintf(stderr, "Can't change current directory to %s: %s\n", s, strerror(errno));
+                break;
+            case PID:
+                fprintf(stderr, "Failed to wait child PID: %s\n", strerror(errno));
+                break;
+            case GETLINE:
+                fprintf(stderr, "Failed to getline: %s\n", strerror(errno));
                 break;
             default:
                 break;
         }
+        if (return_code != 0) exit(return_code);
         exit(EXIT_FAILURE);
     }
 }
 
-void run_exit(char *code) {
-    if (code == NULL) return exit(0);
+void run_exit(char *code, int return_code) {
+    if (code == NULL) return exit(return_code);
     // https://stackoverflow.com/questions/8871711/atoi-how-to-identify-the-difference-between-zero-and-error/18544436
     char *tmp;
     long num = strtol(code, &tmp, 10);
@@ -277,8 +276,17 @@ bool check_pound(const char *line) {
     return false;
 }
 
-void print_info(pid_t pid) {
-    fprintf(stdout, "Child process %d exited normally\n", pid);
+void print_info(pid_t pid, int wstatus, int *return_code) {
+    if (wstatus == 0) fprintf(stdout, "Child process %d exited normally\n", pid);
+    else {
+        if (WIFSIGNALED(wstatus)) {
+            fprintf(stdout, "Child process %d exited with signal %d\n", pid, WTERMSIG(wstatus));
+            *return_code = WTERMSIG(wstatus);
+        } else {
+            fprintf(stdout, "Child process %d exited with return value %d\n", pid, WEXITSTATUS(wstatus));
+            *return_code = WEXITSTATUS(wstatus);
+        }
+    }
 }
 
 void print_time_info(struct timeval *result, struct rusage *ru) {
@@ -288,5 +296,5 @@ void print_time_info(struct timeval *result, struct rusage *ru) {
 }
 
 void get_time(struct timeval *time) {
-    check_error(gettimeofday(time, NULL), 0, NULL, TIME);
+    check_error(gettimeofday(time, NULL), 0, NULL, TIME, 0);
 }
