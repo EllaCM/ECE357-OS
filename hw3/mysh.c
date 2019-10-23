@@ -71,23 +71,22 @@ int main(int argc, char *argv[]) {
         int *mode, redirLoc = 0, cmdLength = 0;
         mode_t *redirIn, *redirOut;
         char **parsedCmd = parse_cmd(line, &redirIn, &redirOut, &mode, &cmdLength, &redirLoc);
+        if (parsedCmd == NULL) continue;
         if (strcmp(parsedCmd[0], "cd") == 0) {
             return_code = run_cd(parsedCmd[1]);
+            free(redirIn); free(redirOut); free(mode); free(parsedCmd);
             continue;
         }
         if (redirLoc == 0 && strcmp(parsedCmd[0], "pwd") == 0) {
             return_code = run_pwd();
+            free(redirIn); free(redirOut); free(mode); free(parsedCmd);
             continue;
         }
         if (strcmp(parsedCmd[0], "exit") == 0) {
             run_exit(parsedCmd[1], return_code);
         }
         return_code = run_cmd(parsedCmd, redirIn, redirOut, mode, cmdLength, redirLoc);
-        //TODO fix
-        free(redirIn);
-        free(redirOut);
-        free(mode);
-        free(parsedCmd);
+        free(redirIn); free(redirOut); free(mode); free(parsedCmd);
     }
     return 0;
 }
@@ -124,13 +123,14 @@ int run_cmd(char **parsedCmd, mode_t *redirIn, mode_t *redirOut, int *mode, int 
             }
             if (strcmp(parsedCmd[0], "pwd") == 0) {
                 run_pwd();
+                exit(EXIT_SUCCESS);
             } else {
                 if (redirLoc) parsedCmd[redirLoc] = NULL;
-                check_error(execvp("parsedCmd[0]", parsedCmd), 0, parsedCmd[0], EXEC, 127);
+                check_error(execvp(parsedCmd[0], parsedCmd), 0, parsedCmd[0], EXEC, 127);
             }
             break;
         default: // parent
-            w = wait3(&wstatus, WUNTRACED | WCONTINUED, &ru);
+            w = wait3(&wstatus, 0, &ru);
             check_error(w, 0, "", PID, 0);
             get_time(&end);
             timersub(&end, &start, &result);
@@ -143,14 +143,28 @@ int run_cmd(char **parsedCmd, mode_t *redirIn, mode_t *redirOut, int *mode, int 
 
 char **parse_cmd(char *line, mode_t **redirIn, mode_t **redirOut, int **mode, int *cmdLength, int *redirLoc) {
     char **parsedCmd = malloc(BUFSIZ * sizeof(char));
+    if (parsedCmd == NULL) {
+        fprintf(stderr, "Failed to allocate memory: %s\n", strerror(errno));
+        return parsedCmd;
+    }
     char *token, *delim = " \r\n";
     int i = 0, m = 0, cnt = 0;
     char *tmp = malloc(sizeof(line));
+    char *tmp_addr = tmp;
+    if (tmp == NULL) {
+        fprintf(stderr, "Failed to allocate memory: %s\n", strerror(errno));
+        return NULL;
+    }
     strcpy(tmp, line);
     while ((strtok_r(tmp, delim, &tmp))) cnt++;
+    free(tmp_addr);
     *redirIn = malloc(cnt * sizeof(mode_t));
     *redirOut = malloc(cnt * sizeof(mode_t));
     *mode = malloc(cnt * sizeof(int));
+    if (*redirIn == NULL || *redirOut == NULL || *mode == NULL) {
+        fprintf(stderr, "Failed to allocate memory: %s\n", strerror(errno));
+        return NULL;
+    }
     cnt = 0;
     while ((token = strtok_r(line, delim, &line))) {
         if (token[0] == '<') { // <
@@ -281,12 +295,11 @@ void print_info(pid_t pid, int wstatus, int *return_code) {
     else {
         if (WIFSIGNALED(wstatus)) {
             fprintf(stdout, "Child process %d exited with signal %d\n", pid, WTERMSIG(wstatus));
-            *return_code = WTERMSIG(wstatus);
         } else {
             fprintf(stdout, "Child process %d exited with return value %d\n", pid, WEXITSTATUS(wstatus));
-            *return_code = WEXITSTATUS(wstatus);
         }
     }
+    *return_code = wstatus;
 }
 
 void print_time_info(struct timeval *result, struct rusage *ru) {
