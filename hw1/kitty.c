@@ -89,7 +89,6 @@ int main(int argc, char *argv[]) {
                 w_cnt++;
                 bytes_written = write(fd_w, buf+total_bytes_written, bytes_read-total_bytes_written);
                 check_error(fd_w, bytes_written, outfile, WRITE);
-                bytes_read = bytes_read - bytes_written;
                 total_bytes_written += bytes_written;
             }
             total_bytes += total_bytes_written;
