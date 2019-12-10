@@ -23,8 +23,6 @@ typedef struct {
     char lock;
 } shared_m;
 
-// value is char for eliminate casting
-// RANGE limited to 100
 struct dll {
     int value;
     struct dll *fwd, *rev;
@@ -276,13 +274,13 @@ void test5() {
                             tmp = dll_insert(anchor, v2, s);
                             break;
                         case 1:
-                            tmp = dll_find(anchor, v2);
-                            if (tmp != NULL) {
-                                dll_delete(anchor, tmp, s);
-                            }
+//                            tmp = dll_find(anchor, v2);
+//                            if (tmp != NULL) {
+//                                dll_delete(anchor, tmp, s);
+//                            }
 //                            consulted Jonathan Pedoeem about duplicate find,
 //                            if there is duplicate element
-//                            dll_find_and_delete(anchor, v2, s);
+                            dll_find_and_delete(anchor, v2, s);
                             break;
                         default:
                             break;
@@ -343,11 +341,11 @@ void test6() {
                             tmp = seq_dll_insert(anchor, v2, s);
                             break;
                         case 1:
-                            tmp = seq_dll_find(anchor, v2, s);
-                            if (tmp != NULL) {
-                                seq_dll_delete(anchor, tmp, s);
-                            }
-//                            seq_dll_find_and_delete(anchor, v2, s);
+//                            tmp = seq_dll_find(anchor, v2, s);
+//                            if (tmp != NULL) {
+//                                seq_dll_delete(anchor, tmp, s);
+//                            }
+                            seq_dll_find_and_delete(anchor, v2, s);
                             break;
                         default:
                             break;
