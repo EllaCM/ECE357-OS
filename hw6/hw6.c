@@ -16,15 +16,17 @@
 #define NSLOTS 100
 #define NPROCS 10
 #define NITERS 100000
-#define NRANGE 1000
+#define NRANGE 100
 
 typedef struct {
     int data;
-    int lock;
+    char lock;
 } shared_m;
 
+// value is char for eliminate casting
+// RANGE limited to 100
 struct dll {
-    int value;
+    char value;
     struct dll *fwd, *rev;
 };
 
@@ -34,24 +36,24 @@ struct naive_slab {
 };
 
 struct slab {
-    int spinlock;
+    char spinlock;
     char freemap[NSLOTS];
     struct dll slots[NSLOTS];
 };
 
 // put seqlock relevent locks and count in the slab for the memory efficiency
 struct seq_slab {
-    int spinlock;
+    char spinlock;
     int count;
-    int countlock;
-    int dll_spinlock;
+    char countlock;
+    char dll_spinlock;
     char freemap[NSLOTS];
     struct dll slots[NSLOTS];
 };
 
-void spin_lock(int *lock);
+void spin_lock(char *lock);
 
-void spin_unlock(int *lock);
+void spin_unlock(char *lock);
 
 void test1();
 
@@ -169,8 +171,7 @@ void test1() {
         exit(EXIT_FAILURE);
     }
     m->data = 0;
-    int i;
-    int j;
+    int i, j;
     for (i = 0; i < NPROCS; i++) {
         switch (fork()) {
             case -1:
@@ -217,7 +218,7 @@ void test1() {
 void test2() {
     struct naive_slab s;
     memset(s.freemap, 0, sizeof(s.freemap));
-    int i;
+    int i, j;
     for (i = 1; i < NSLOTS_TEST + 2; i++) {
         fprintf(stderr, "%d ", i);
         struct dll *tmp = naive_slab_alloc(&s);
@@ -226,7 +227,7 @@ void test2() {
         } else {
             fprintf(stderr, "inserted\n");
         }
-        for (int j = 0; j < NSLOTS; j++) {
+        for (j = 0; j < NSLOTS; j++) {
             fprintf(stderr, "%d ", s.freemap[j]);
         }
         fprintf(stderr, "\n");
@@ -235,7 +236,7 @@ void test2() {
     for (i = 0; i < NSLOTS_TEST + 1; i++) {
         if (naive_slab_dealloc(&s, &s.slots[i]) == 1) fprintf(stderr, "%d deleted\n", i);
         else fprintf(stderr, "%d failed\n", i);
-        for (int j = 0; j < NSLOTS; j++) {
+        for (j = 0; j < NSLOTS; j++) {
             fprintf(stderr, "%d ", s.freemap[j]);
         }
         fprintf(stderr, "\n");
@@ -253,7 +254,7 @@ void test5() {
         fprintf(stderr, "Failed to map memory: %s", strerror(errno));
         exit(EXIT_FAILURE);
     }
-//    struct dll *anchor = create_anchor();
+
     struct dll *anchor = slab_alloc(s);
     anchor->fwd = anchor;
     anchor->rev = anchor;
@@ -270,7 +271,7 @@ void test5() {
                 for (j = 0; j < NITERS; j++) {
                     int v1 = (rand());
                     int v2 = (rand()) % NRANGE;
-                    switch(v1%2) {
+                    switch (v1 % 2) {
                         case 0:
                             tmp = dll_insert(anchor, v2, s);
                             break;
@@ -320,6 +321,7 @@ void test6() {
         fprintf(stderr, "Failed to map memory: %s", strerror(errno));
         exit(EXIT_FAILURE);
     }
+
     struct dll *anchor = seq_slab_alloc(s);
     anchor->fwd = anchor;
     anchor->rev = anchor;
@@ -334,9 +336,9 @@ void test6() {
                 srand(time(0) * i * 123);
                 struct dll *tmp;
                 for (j = 0; j < NITERS; j++) {
-                    int v1 = (rand());
-                    int v2 = (rand()) % NRANGE;
-                    switch(v1%2) {
+                    int v1 = rand() % 2;
+                    int v2 = rand() % NRANGE;
+                    switch (v1) {
                         case 0:
                             tmp = seq_dll_insert(anchor, v2, s);
                             break;
@@ -384,9 +386,9 @@ bool is_dll_sorted(struct dll *anchor) {
     return true;
 }
 
-void spin_lock(int *lock) { while (tas((char *) lock) != 0); }
+void spin_lock(char *lock) { while (tas(lock) != 0); }
 
-void spin_unlock(int *lock) { *lock = 0; }
+void spin_unlock(char *lock) { *lock = 0; }
 
 void *naive_slab_alloc(struct naive_slab *slab) {
     int i;
@@ -409,16 +411,16 @@ int naive_slab_dealloc(struct naive_slab *slab, void *object) {
 }
 
 void *slab_alloc(struct slab *slab) {
+    spin_lock(&slab->spinlock);
     int i;
     for (i = 0; i < NSLOTS; i++) {
-        spin_lock(&slab->spinlock);
         if (slab->freemap[i] == 0) {
             slab->freemap[i] = 1;
             spin_unlock(&slab->spinlock);
             return slab->slots + i;
         }
-        spin_unlock(&slab->spinlock);
     }
+    spin_unlock(&slab->spinlock);
     return NULL;
 }
 
@@ -435,16 +437,16 @@ int slab_dealloc(struct slab *slab, void *object) {
 }
 
 void *seq_slab_alloc(struct seq_slab *slab) {
+    spin_lock(&slab->spinlock);
     int i;
     for (i = 0; i < NSLOTS; i++) {
-        spin_lock(&slab->spinlock);
         if (slab->freemap[i] == 0) {
             slab->freemap[i] = 1;
             spin_unlock(&slab->spinlock);
             return slab->slots + i;
         }
-        spin_unlock(&slab->spinlock);
     }
+    spin_unlock(&slab->spinlock);
     return NULL;
 }
 
@@ -468,16 +470,16 @@ struct dll *dll_insert(struct dll *anchor, int value, struct slab *slab) {
         spin_unlock(&anchor->value);
         return NULL;
     }
-    new->value = value;
-    struct dll *it = anchor;
-    while (it->fwd->value < value && it->fwd != anchor) {
+    new->value = (char)value;
+    struct dll *it = anchor->fwd;
+    while (it->value < value && it != anchor) {
         it = it->fwd;
     }
-    struct dll *next = it->fwd;
-    it->fwd = new;
-    new->rev = it;
-    new->fwd = next;
-    next->rev = new;
+    new->fwd = it;
+    new->rev = it->rev;
+    it->rev->fwd = new;
+    it->rev = new;
+
     spin_unlock(&anchor->value);
     return new;
 }
@@ -515,7 +517,7 @@ void dll_find_and_delete(struct dll *anchor, int value, struct slab *slab) {
 struct dll *dll_find(struct dll *anchor, int value) {
     spin_lock(&anchor->value);
     struct dll *it = anchor->fwd;
-    while (it->value < value && it->fwd != anchor) {
+    while (it->value < value && it != anchor) {
         it = it->fwd;
     }
 
@@ -564,16 +566,16 @@ struct dll *seq_dll_insert(struct dll *anchor, int value, struct seq_slab *slab)
         write_sequnlock(slab);
         return NULL;
     }
-    new->value = value;
-    struct dll *it = anchor;
-    while (it->fwd->value < value && it->fwd != anchor) {
+    new->value = (char) value;
+    struct dll *it = anchor->fwd;
+    while (it->value < value && it != anchor) {
         it = it->fwd;
     }
-    struct dll *next = it->fwd;
-    it->fwd = new;
-    new->rev = it;
-    new->fwd = next;
-    next->rev = new;
+    new->fwd = it;
+    new->rev = it->rev;
+    it->rev->fwd = new;
+    it->rev = new;
+
     write_sequnlock(slab);
     return new;
 }
@@ -652,7 +654,7 @@ void print_info() {
     fprintf(stdout, "The size of slots: %d\n", NSLOTS);
     fprintf(stdout, "The number of processes: %d\n", NPROCS);
     fprintf(stdout, "The number of iteration for each process: %d\n", NITERS);
-    fprintf(stdout, "The range of the value inserted to dll: 0~%d\n", NRANGE-1);
+    fprintf(stdout, "The range of the value inserted to dll: 0~%d\n", NRANGE - 1);
 }
 
 void print_time_info(struct timeval *result) {
