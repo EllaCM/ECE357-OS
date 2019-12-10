@@ -26,7 +26,7 @@ typedef struct {
 // value is char for eliminate casting
 // RANGE limited to 100
 struct dll {
-    char value;
+    int value;
     struct dll *fwd, *rev;
 };
 
@@ -464,13 +464,13 @@ int seq_slab_dealloc(struct seq_slab *slab, void *object) {
 
 struct dll *dll_insert(struct dll *anchor, int value, struct slab *slab) {
     if (anchor == NULL || slab == NULL) return NULL;
-    spin_lock(&anchor->value);
+    spin_lock((char *) &anchor->value);
     struct dll *new = slab_alloc(slab);
     if (new == NULL) {
-        spin_unlock(&anchor->value);
+        spin_unlock((char *) &anchor->value);
         return NULL;
     }
-    new->value = (char)value;
+    new->value = (char) value;
     struct dll *it = anchor->fwd;
     while (it->value < value && it != anchor) {
         it = it->fwd;
@@ -480,25 +480,25 @@ struct dll *dll_insert(struct dll *anchor, int value, struct slab *slab) {
     it->rev->fwd = new;
     it->rev = new;
 
-    spin_unlock(&anchor->value);
+    spin_unlock((char *) &anchor->value);
     return new;
 }
 
 void dll_delete(struct dll *anchor, struct dll *node, struct slab *slab) {
-    spin_lock(&anchor->value);
+    spin_lock((char *) &anchor->value);
     if (slab_dealloc(slab, node) == -1) {
-        spin_unlock(&anchor->value);
+        spin_unlock((char *) &anchor->value);
         return;
     }
     struct dll *prev = node->rev;
     struct dll *next = node->fwd;
     prev->fwd = next;
     next->rev = prev;
-    spin_unlock(&anchor->value);
+    spin_unlock((char *) &anchor->value);
 }
 
 void dll_find_and_delete(struct dll *anchor, int value, struct slab *slab) {
-    spin_lock(&anchor->value);
+    spin_lock((char *) &anchor->value);
     struct dll *it = anchor->fwd;
     while (it->value < value && it->fwd != anchor) {
         it = it->fwd;
@@ -511,21 +511,21 @@ void dll_find_and_delete(struct dll *anchor, int value, struct slab *slab) {
         next->rev = prev;
         slab_dealloc(slab, it);
     }
-    spin_unlock(&anchor->value);
+    spin_unlock((char *) &anchor->value);
 }
 
 struct dll *dll_find(struct dll *anchor, int value) {
-    spin_lock(&anchor->value);
+    spin_lock((char *) &anchor->value);
     struct dll *it = anchor->fwd;
     while (it->value < value && it != anchor) {
         it = it->fwd;
     }
 
     if (it->value == value && it->fwd != anchor) {
-        spin_unlock(&anchor->value);
+        spin_unlock((char *) &anchor->value);
         return it;
     }
-    spin_unlock(&anchor->value);
+    spin_unlock((char *) &anchor->value);
     return NULL;
 }
 
