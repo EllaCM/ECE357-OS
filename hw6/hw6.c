@@ -544,11 +544,14 @@ void seq_dll_find_and_delete(struct dll *anchor, int value, struct seq_slab *sla
 
         if (it->value == value && it->fwd != anchor) {
             write_seqlock(slab);
+            if (seq_slab_dealloc(slab, it) == -1) {
+                write_sequnlock(slab);
+                return;
+            }
             struct dll *prev = it->rev;
             struct dll *next = it->fwd;
             prev->fwd = next;
             next->rev = prev;
-            seq_slab_dealloc(slab, it);
             write_sequnlock(slab);
             return;
         }
