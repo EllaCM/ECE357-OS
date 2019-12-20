@@ -10,20 +10,6 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
-#define READ 1
-#define WRITE 2
-#define ERROR 4
-#define OCLOSE 5
-#define ICLOSE 6
-#define WOPEN 7
-#define ROPEN 8
-#define DUP 9
-#define TIME 10
-#define EXEC 11
-#define CHDIR 12
-#define PID 13
-#define GETLINE 14
-
 int NPROC, NICE, WAIT;
 
 void print_time_info(int proc, struct rusage *ru);
