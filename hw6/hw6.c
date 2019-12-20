@@ -179,8 +179,7 @@ void test1() {
                 for (j = 0; j < NITERS; j++) {
                     m->data++;
                 }
-                exit(EXIT_SUCCESS
-                );
+                exit(EXIT_SUCCESS);
             default:
                 break;
         }
